@@ -1,0 +1,14 @@
+*.docx
+*.xlsx
+*.xls
+*.doc
+data
+output
+
+# python
+*.py[cod]
+*.so
+*.egg
+*.egg-info
+.idea
+.ropeproject
