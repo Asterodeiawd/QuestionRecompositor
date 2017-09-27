@@ -1,0 +1,45 @@
+[
+  {
+    "name": "SingleChoice",
+    "read":
+    {
+      "no_header": false
+    },
+    "process":
+    {
+      "use_column_name": true,
+      "question_col": ["题目内容"],
+      "choice_col": ["选项1", "选项2", "选项3", "选项4", "选项5"],
+      "answer_col": ["参考答案"],
+      "add_conventional_letter": true,
+      "change_answer_letter": true,
+      "trim": true
+    },
+    "write":
+    {
+      "title": "单选题",
+      "hide_answer": false
+    }
+  },
+  {
+    "name": "MultiChoice",
+    "read":
+    {
+        "no_header": false
+    },
+    "process":
+    {
+      "use_column_name": false,
+      "question_col": "E",
+      "answer_col": "FGHIJ",
+      "choice_col": "K",
+      "add_conventional_letter": true,
+      "change_answer_letter": true,
+      "trim": true
+    },
+    "write":
+    {
+      "title": "单选题"
+    }
+  }
+]

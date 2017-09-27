@@ -10,6 +10,7 @@ usage:
 """
 
 import json
+import logging
 import re
 from os import getcwd
 from os import path
@@ -18,14 +19,13 @@ import pandas as pd
 from docx import Document
 from docx.enum.text import WD_TAB_ALIGNMENT
 from docx.shared import Cm
-import logging
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s: %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S')
 
-def get_raw_data(book, sheet, config) -> pd.DataFrame:
 
+def get_raw_data(book, sheet, config) -> pd.DataFrame:
     logging.info('reading data from excel file')
 
     no_header = config['no_header']
@@ -60,16 +60,15 @@ def number_2_char(n, base=0):
     return chr(ord('A') + n - base)
 
 
-def unify_process_config(config):
+def unify_process(config):
     logging.info('unifying process part in config')
-    if not config['process']['use_column_name']:
+    if not config['use_column_name']:
         for col in ['question_col', 'answer_col', 'choice_col']:
             if isinstance(config[col], str):
-                config['process'][col] = list(config['process'][col])
+                config[col] = list(config[col])
 
 
 def process_data(data, config):
-
     logging.info('starting to process data')
 
     needed_data_column = config['question_col'] + config['answer_col'] + config['choice_col']
@@ -150,11 +149,9 @@ def write_doc_title(doc: Document, config):
 
 
 def write_doc_sc(data, doc: Document, config):
-
     # add document title
     write_doc_title(doc, config)
 
-    # TODO: ADD LOGGING
     logging.info('writing questions to document, {} in total'.format(len(data)))
 
     for entry in data:
@@ -202,11 +199,9 @@ def write_doc_sc(data, doc: Document, config):
 
 # multiple choice
 def write_doc_mc(data, doc: Document, config):
-
     # add document title
     doc.add_heading(config['title'], 0)
 
-    # TODO: ADD LOGGING
     logging.info('writing questions to document, {} in total'.format(len(data)))
 
     for entry in data:
@@ -258,18 +253,50 @@ def main():
     config_path = path.join(cwd, 'config.json')
     document_template_path = path.join(cwd, 'data', 'template.docx')
 
-    with open(config_path, 'rb') as f:
-        config = json.load(f)
+    configs = load_configs_from_file(config_path)
+    c = configs[0]
 
-    c = config[0]
-
-    unify_process_config(c)
-    data = get_raw_data(source_path, 'Sheet1', c['read'])
-    parsed_data = process_data(data, c['process'])
+    unify_process(c.process)
+    data = get_raw_data(source_path, 'Sheet1', c.read)
+    parsed_data = process_data(data, c.process)
 
     doc = Document(document_template_path)
-    write_doc_sc(parsed_data, doc, c['write'])
+    write_doc_sc(parsed_data, doc, c.write)
     doc.save(path.join(cwd, 'dx.docx'))
+
+
+class Config(object):
+    def __init__(self, data):
+        # configs should include 4 parts: name, read method, process method and write method
+        # so here don't have to check before assign
+        # self.name = None
+        # self.read = None
+        # self.process = None
+        # self.write = None
+
+        self.load(data)
+
+    def load(self, data):
+        self.name = data['name']
+        self.read = data['read']
+        self.process = data['process']
+        self.write = data['write']
+
+
+def load_configs_from_file(filename):
+    configs = []
+
+    with open(filename, mode='r', encoding='utf-8') as f:
+        raw_configs = json.loads(f.read())
+
+        # configs should be in one list, single config can omit the outter list
+        if isinstance(raw_configs, list):
+            for raw_config in raw_configs:
+                configs.append(Config(raw_config))
+        else:
+            configs.append(Config(raw_configs))
+
+    return configs
 
 
 if __name__ == '__main__':
