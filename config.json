@@ -22,7 +22,7 @@
     }
   },
   {
-    "name": "MultiChoice",
+    "name": "MultiChoiceBK",
     "read":
     {
         "no_header": false
@@ -40,6 +40,26 @@
     "write":
     {
       "title": "单选题"
+    }
+  },
+  {
+    "name": "TrueFalse",
+    "read": {
+      "no_header": false
+    },
+    "process": {
+      "use_column_name": true,
+      "question_col": [
+        "题目内容"
+      ],
+      "answer_col": [
+        "参考答案"
+      ],
+      "trim": true
+    },
+    "write": {
+      "title": "判断题",
+      "hide_answer": false
     }
   }
 ]

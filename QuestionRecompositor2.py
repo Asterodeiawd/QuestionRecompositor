@@ -39,6 +39,7 @@ def get_raw_data(book, sheet, config) -> pd.DataFrame:
 
     except Exception as e:
         logging.error('unknown error')
+        print(e)
         exit(-1)
 
     else:
@@ -60,18 +61,14 @@ def number_2_char(n, base=0):
     return chr(ord('A') + n - base)
 
 
-def unify_process(config):
-    logging.info('unifying process part in config')
-    if not config['use_column_name']:
-        for col in ['question_col', 'answer_col', 'choice_col']:
-            if isinstance(config[col], str):
-                config[col] = list(config[col])
-
-
 def process_data(data, config):
     logging.info('starting to process data')
 
-    needed_data_column = config['question_col'] + config['answer_col'] + config['choice_col']
+    if hasattr(config, 'choice_col'):
+        needed_data_column = config['question_col'] + config['answer_col'] + config['choice_col']
+    else:
+        needed_data_column = config['question_col'] + config['answer_col']
+
     needed_data = data[needed_data_column]
 
     if config['trim']:
@@ -79,7 +76,8 @@ def process_data(data, config):
         pattern = re.compile(r'[\r\n]')
         needed_data = needed_data.applymap(lambda s: re.sub(pattern, '', s))
 
-    if config['add_conventional_letter']:
+    # TODO: if not choice questions, skip this
+    if hasattr(config, 'add_conventional_letter') and config['add_conventional_letter']:
 
         logging.info('\tadding conventional letter to choices')
         for i in range(len(config['choice_col'])):
@@ -94,7 +92,7 @@ def process_data(data, config):
 
             needed_data[config['choice_col'][i]] = ser
 
-    if config['change_answer_letter']:
+    if hasattr(config, 'change_answer_letter') and config['change_answer_letter']:
         # TODO: first column of answer, change this?
         logging.info('\tchanging answer number to letters')
         answer_col = needed_data[config['answer_col'][0]]
@@ -116,10 +114,11 @@ def process_data(data, config):
             entry['question'].append(q)
 
         # choices
-        for c in row[config['choice_col']]:
-            # TODO: 'nan' values should be handle more carefully
-            if c != 'nan':
-                entry['choices'].append(c)
+        if hasattr(config, 'choice_col'):
+            for c in row[config['choice_col']]:
+                # TODO: 'nan' values should be handle more carefully
+                if c != 'nan':
+                    entry['choices'].append(c)
 
         # answer
         for a in row[config['answer_col']]:
@@ -149,6 +148,56 @@ def write_doc_title(doc: Document, config):
 
 
 def write_doc_sc(data, doc: Document, config):
+    # add document title
+    write_doc_title(doc, config)
+
+    logging.info('writing questions to document, {} in total'.format(len(data)))
+
+    for entry in data:
+
+        # question
+        for item in entry['question']:
+            doc.add_paragraph(item, style='Heading 2')
+
+        # choices:
+        max_ans_len = max(map(len, entry['choices']))
+        if max_ans_len <= 10:
+            separator = ['\t', '\t']
+            tab_pos = [1 + x * 4.5 for x in range(4)]
+
+        elif max_ans_len <= 22:
+            separator = ['\t', '\n\t']
+            tab_pos = [1, 10]
+
+        else:
+            separator = ['\n\t', '\n\t']
+            tab_pos = [1]
+
+        choice_count = len(entry['choices'])
+        choice_string = ['\t']
+        for cnt, item in enumerate(entry['choices']):
+            if cnt != choice_count - 1:
+                choice_string += item + separator[cnt % 2]
+            else:
+                choice_string += item
+
+        p = doc.add_paragraph(''.join(choice_string))
+        pf = p.paragraph_format
+        for pos in tab_pos:
+            pf.tab_stops.add_tab_stop(Cm(pos))
+
+        # answer
+        if not config['hide_answer']:
+            answer_string = ''.join(entry['answer'])
+            p = doc.add_paragraph("\t答案：" + answer_string, style='答案')
+            pf = p.paragraph_format
+            pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
+
+    return doc
+
+
+# multiple choice
+def write_doc_mc(data, doc: Document, config):
     # add document title
     write_doc_title(doc, config)
 
@@ -197,10 +246,10 @@ def write_doc_sc(data, doc: Document, config):
     return doc
 
 
-# multiple choice
-def write_doc_mc(data, doc: Document, config):
+# true false questions
+def write_doc_tf(data, doc: Document, config):
     # add document title
-    doc.add_heading(config['title'], 0)
+    write_doc_title(doc, config)
 
     logging.info('writing questions to document, {} in total'.format(len(data)))
 
@@ -209,33 +258,6 @@ def write_doc_mc(data, doc: Document, config):
         # question
         for item in entry['question']:
             doc.add_paragraph(item, style='Heading 2')
-
-        # choices:
-        max_ans_len = max(map(len, entry['choices']))
-        if max_ans_len <= 10:
-            separater = ['\t', '\t']
-            tab_pos = [1 + x * 4.5 for x in range(4)]
-
-        elif max_ans_len <= 22:
-            separater = ['\t', '\n\t']
-            tab_pos = [1, 10]
-
-        else:
-            separater = ['\n\t', '\n\t']
-            tab_pos = [1]
-
-        choice_count = len(entry['choices'])
-        choice_string = ['\t']
-        for cnt, item in enumerate(entry['choices']):
-            if cnt != choice_count - 1:
-                choice_string += item + separater[cnt % 2]
-            else:
-                choice_string += item
-
-        p = doc.add_paragraph(''.join(choice_string))
-        pf = p.paragraph_format
-        for pos in tab_pos:
-            pf.tab_stops.add_tab_stop(Cm(pos))
 
         # answer
         if not config['hide_answer']:
@@ -246,23 +268,24 @@ def write_doc_mc(data, doc: Document, config):
 
     return doc
 
-
 def main():
     cwd = getcwd()
-    source_path = path.join(cwd, 'data', r'线路架空线专业单选.xls')
+    # source_path = path.join(cwd, 'data', r'线路架空线专业单选.xls')
+    source_path = r"C:\Users\asterodeia\Desktop\变压器新增题库汇总.xlsx"
     config_path = path.join(cwd, 'config.json')
     document_template_path = path.join(cwd, 'data', 'template.docx')
 
     configs = load_configs_from_file(config_path)
-    c = configs[0]
+    c = configs[2]
+    print(c.name)
 
-    unify_process(c.process)
-    data = get_raw_data(source_path, 'Sheet1', c.read)
+    name = '判断'
+    data = get_raw_data(source_path, name, c.read)
     parsed_data = process_data(data, c.process)
 
     doc = Document(document_template_path)
-    write_doc_sc(parsed_data, doc, c.write)
-    doc.save(path.join(cwd, 'dx.docx'))
+    write_doc_tf(parsed_data, doc, c.write)
+    doc.save(path.join(cwd, name))
 
 
 class Config(object):
@@ -282,6 +305,12 @@ class Config(object):
         self.process = data['process']
         self.write = data['write']
 
+    def unify_process(self):
+        if not self.process['use_column_name']:
+            for col in ['question_col', 'answer_col', 'choice_col']:
+                if isinstance(self.process[col], str):
+                    self.process[col] = list(self.process[col])
+
 
 def load_configs_from_file(filename):
     configs = []
@@ -295,6 +324,10 @@ def load_configs_from_file(filename):
                 configs.append(Config(raw_config))
         else:
             configs.append(Config(raw_configs))
+
+    logging.info('unifying process part in config')
+    for config in configs:
+        config.unify_process()
 
     return configs
 
