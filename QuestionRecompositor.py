@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
-# Copyright (C) 2016 - 2017, asterodeia <noachic.wang@gmail.com>
+# Copyright (C) 2016 - 2017, asterodeia <d_wang_890227@outlook.com>
 
 """
 usage:
@@ -9,8 +9,8 @@ usage:
 --change_answer_letter --separate_choices --separator '\s'
 """
 
-import abc
-# from docx import Document
+import logging
+import re
 from argparse import ArgumentParser
 from os import getcwd
 from os import path
@@ -19,129 +19,61 @@ import pandas as pd
 from docx import Document
 from docx.enum.text import WD_TAB_ALIGNMENT
 from docx.shared import Cm
-import re
-import logging
+
+from Config import load_configs_from_file
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(levelname)s: %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
 
 
 class QuestionRecompositor(object):
-    def __init__(self, config):
+    def __init__(self, config, writer):
         self.config = config
-        pass
+        self.writer = writer
+        # this may change later
+        self.data_processor = process_data
 
-    @staticmethod
-    def column_name_2_index(name):
-        return ord(name) - ord('A') + 1
+    def set_config(self, config):
+        self.config = config
 
-    # TODO: CHANGE HERE TO SUPPORT REAL COLUMN NAME, NOT ONLY A SINGLE LETTER
-    @staticmethod
-    def column_index_2_name(index):
-        return chr(int(index) + ord('A') - 1)
+    def set_writer(self, writer):
+        self.writer = writer
 
-    def format_question(self, data):
-        if self.config.conventional_letter:
-            for entry in data:
-                for index in range(len(entry['choices'])):
-                    entry['choices'][index] = \
-                        chr(ord('A') + index) + '. ' + entry['choices'][index]
+    def _load_data(self, file_name, sheet_name):
+        data_frame = load_data(file_name, sheet_name, self.config.read)
+        return data_frame
 
-        if self.config.change_answer_letter:
-            for entry in data:
-                original_answer = entry['answers'][0]
-                entry['answers'] = []
-                for c in original_answer:
-                    entry['answers'].append(
-                        self.column_index_2_name(c)
-                    )
-                    # for index in range(len(entry['answers'])):
-                    # entry['answers'][index] = \
-                    # self.column_index_2_name(entry['answers'][index])
-
-        return data
-
-    def recompose2(self):
-        try:
-            doc = Document(self.config.word_template)
-            doc.save('test.docx')
-        except Exception as e:
-            print('create word application failed, please try again')
-            print(e)
-
-        else:
-            try:
-                data = self.read()
-                data = self.format_question(data)
-
-                for index, entry in enumerate(data):
-                    print('processing question No. {}'.format(index))
-                    # question
-                    for item in entry['question']:
-                        doc.add_paragraph(item, style='Heading 2')
-
-                    # choices:
-                    if 'choices' in entry:
-                        max_ans_len = max(map(len, entry['choices']))
-                        p = doc.add_paragraph('')
-                        pf = p.paragraph_format
-                        if max_ans_len <= 10:
-                            separater = ['\t', '\t']
-
-                            for pos in [1 + x * 4.5 for x in range(4)]:
-                                pf.tab_stops.add_tab_stop(Cm(pos))
-
-                        elif max_ans_len <= 22:
-                            separater = ['\t', '\n\t']
-                            pf.tab_stops.add_tab_stop(Cm(1))
-                            pf.tab_stops.add_tab_stop(Cm(10))
-
-                        else:
-                            separater = ['\n\t', '\n\t']
-                            pf.tab_stops.add_tab_stop(Cm(1))
-
-                        choice_count = len(entry['choices'])
-                        choice_string = ['\t']
-                        for cnt, item in enumerate(entry['choices']):
-                            if cnt != choice_count - 1:
-                                choice_string += item + separater[cnt % 2]
-                            else:
-                                choice_string += item
-                        p.add_run(''.join(choice_string))
-
-                    # answer
-                    answer_string = ''.join(entry['answers'])
-                    p = doc.add_paragraph("答案：" + answer_string, style='答案')
-                    pf = p.paragraph_format
-                    pf.tab_stops.add_tab_stop(Cm(18.5), alignment=WD_TAB_ALIGNMENT.RIGHT)
-
-                # TODO: filename
-                doc.save(path.join(getcwd(), 'test.docx'))
-            except Exception as e:
-                print(e)
-            finally:
-                pass
+    def recompose(self, file_name, sheet_name, doc):
+        data_frame = self._load_data(file_name, sheet_name)
+        data_frame = self.data_processor(data_frame, self.config.process)
+        self.writer(data_frame, doc, self.config.write)
 
 
-class Config(object):
-    def __init__(self):
-        pass
+def load_data(book, sheet, config) -> pd.DataFrame:
+    logging.info('reading data from excel file')
 
-    pass
-
-
-def get_data(book, sheet, no_header) -> pd.DataFrame:
-    """
-    :param header_row_count: None for no header, int for a list like header
-    :return: DataFrame, if there's no header, a zero based header will be added
-    """
-
+    no_header = config['no_header']
     header_row_count = None if no_header else 0
-    dataframe = pd.read_excel(book, sheet, header=header_row_count, dtype=str)
+    try:
+        dataframe = pd.read_excel(book, sheet, header=header_row_count, dtype=str)
+    except FileNotFoundError as e:
+        logging.error('data source file: {} not found, please check the file name'.format(book))
+        logging.info('exit, please check and rerun this script')
+        exit(-1)
 
-    if no_header:
-        column_count = dataframe.shape[1]
-        column_name = [number_2_char(i) for i in range(column_count)]
-        dataframe.columns = column_name
+    except Exception as e:
+        logging.error('unexpected error: {}'.format(e))
+        exit(-1)
 
-    return dataframe
+    else:
+
+        if no_header:
+            column_count = dataframe.shape[1]
+            column_name = [number_2_char(i) for i in range(column_count)]
+            dataframe.columns = column_name
+
+        return dataframe
 
 
 def shift_character(ch, i):
@@ -153,135 +85,250 @@ def number_2_char(n, base=0):
     return chr(ord('A') + n - base)
 
 
-class ObjectiveQuestions(object):
-    __metaclass__ = abc.ABCMeta
+def process_data(data, config):
+    logging.info('starting to process data')
 
-    def __init__(self, config):
-        self.config = config
-        self.data = None
+    if 'choice_col' in config:
+        needed_data_column = config['question_col'] + config['answer_col'] + config['choice_col']
+    else:
+        needed_data_column = config['question_col'] + config['answer_col']
 
-    @abc.abstractmethod
-    def write_doc(self, doc, data):
-        return
+    needed_data = data[needed_data_column]
 
-    @abc.abstractmethod
-    def process_data(self, data):
-        return
+    if config['trim']:
+        logging.info('\ttrimming data')
+        pattern = re.compile(r'[\r\n]')
+        needed_data = needed_data.applymap(lambda s: re.sub(pattern, '', s))
 
+    # TODO: if not choice questions, skip this
+    if 'add_conventional_letter' in config and config['add_conventional_letter']:
 
-class SingleChoice(ObjectiveQuestions):
-    def __init__(self, config):
-        temp_config = config.copy()
-        if not config['use_column_name']:
-            for col in ['question_col', 'answer_col', 'choice_col']:
-                if isinstance(config[col], str):
-                    temp_config[col] = list(config[col])
+        logging.info('\tadding conventional letter to choices')
+        for i in range(len(config['choice_col'])):
+            conventional_letter = number_2_char(i)
 
-        super().__init__(temp_config)
+            def add_conventional_letter(s):
+                return s if s == 'nan' else '{}. {}'.format(conventional_letter, s)
 
-    def process_data(self, data):
+            # don't know if there is a better way to update just one column of dataframe
+            ser = needed_data[config['choice_col'][i]]
+            ser = ser.apply(add_conventional_letter)
 
-        # this function only use the process block in config
-        config = self.config['process']
+            needed_data[config['choice_col'][i]] = ser
 
-        needed_data_column = config['question_col'] + \
-                             config['answer_col'] + \
-                             config['choice_col']
-        needed_data = data[needed_data_column]
+    if 'change_answer_letter' in config and config['change_answer_letter']:
+        # TODO: first column of answer, change this?
+        logging.info('\tchanging answer number to letters')
+        answer_col = needed_data[config['answer_col'][0]]
 
-        if config['trim']:
-            pattern = re.compile(r'[\r\n]')
-            # def trim(s):
-            # return re.sub(pattern, '', s)
+        # def change_answer_letter(s):
+        # answer = [number_2_char(int(ch), 1) for ch in s]
+        # return ''.join(answer)
 
-            needed_data = needed_data.applymap(lambda s: re.sub(pattern, '', s))
+        ser = answer_col.apply(lambda s: ''.join([number_2_char(int(ch), 1) for ch in s]))
+        needed_data[config['answer_col'][0]] = ser
 
-        if config['add_conventional_letter']:
+    logging.info('\treformatting data')
+    ret = []
+    for index, row in needed_data.iterrows():
+        entry = dict(question=[], choices=[], answer=[])
 
-            for i in range(len(config['choice_col'])):
-                conventional_letter = number_2_char(i)
+        # question
+        for q in row[config['question_col']]:
+            entry['question'].append(q)
 
-                def add_conventional_letter(s):
-                    return s if s == 'nan' else '{}. {}'.format(conventional_letter, s)
+        # choices
+        if 'choice_col' in config:
+            for c in row[config['choice_col']]:
+                # TODO: 'nan' values should be handle more carefully
+                if c != 'nan':
+                    entry['choices'].append(c)
 
-                # don't know if there is a better way to update just one column of dataframe
-                ser = needed_data[config['choice_col'][i]]
-                ser = ser.apply(add_conventional_letter)
+        # answer
+        for a in row[config['answer_col']]:
+            entry['answer'].append(a)
 
-                needed_data[config['choice_col'][i]] = ser
+        ret.append(entry)
 
-        if config['change_answer_letter']:
-            # TODO: first column of answer, change this?
-            answer_col = needed_data[config['answer_col'][0]]
-
-            # def change_answer_letter(s):
-                # answer = [number_2_char(int(ch), 1) for ch in s]
-                # return ''.join(answer)
-
-            ser = answer_col.apply(lambda s: [number_2_char(int(ch), 1) for ch in s])
-            needed_data[config['answer_col'][0]] = ser
-
-        ret = []
-        for entry in needed_data:
-            pass
-
-        return needed_data
-
-    def write_doc(self, doc, data):
-        # add title
-        doc.add_paragraph(self.config['title'], style='Heading 1')
+    logging.info('done processing data')
+    # return formatted question data
+    return ret
 
 
-class MultiChoice(ObjectiveQuestions):
-    pass
+def get_document_params(doc):
+    section = doc.sections[-1]
+    left_margin = section.left_margin.cm
+    right_margin = section.right_margin.cm
+    top_margin = section.top_margin.cm
+    bottom_margin = section.bottom_margin.cm
+    height = section.page_height.cm
+    width = section.page_width.cm
+    print(height, width, left_margin, right_margin, top_margin, bottom_margin)
 
 
-class TrueFalseChoice(ObjectiveQuestions):
-    pass
+def write_doc_title(doc: Document, config):
+    doc.add_heading(config['title'], 0)
+    # doc.paragraphs[0].delete()
 
 
-class BriefAnswer(ObjectiveQuestions):
-    pass
+def write_doc_sc(data, doc: Document, config):
+    # add document title
+    write_doc_title(doc, config)
+
+    logging.info('writing questions to document, {} in total'.format(len(data)))
+
+    for entry in data:
+
+        # question
+        for item in entry['question']:
+            doc.add_paragraph(item, style='Heading 2')
+
+        # choices:
+        max_ans_len = max(map(len, entry['choices']))
+        if max_ans_len <= 10:
+            separator = ['\t', '\t']
+            tab_pos = [1 + x * 4.5 for x in range(4)]
+
+        elif max_ans_len <= 22:
+            separator = ['\t', '\n\t']
+            tab_pos = [1, 10]
+
+        else:
+            separator = ['\n\t', '\n\t']
+            tab_pos = [1]
+
+        choice_count = len(entry['choices'])
+        choice_string = ['\t']
+        for cnt, item in enumerate(entry['choices']):
+            if cnt != choice_count - 1:
+                choice_string += item + separator[cnt % 2]
+            else:
+                choice_string += item
+
+        p = doc.add_paragraph(''.join(choice_string))
+        pf = p.paragraph_format
+        for pos in tab_pos:
+            pf.tab_stops.add_tab_stop(Cm(pos))
+
+        # answer
+        if not config['hide_answer']:
+            answer_string = ''.join(entry['answer'])
+            p = doc.add_paragraph("\t答案：" + answer_string, style='答案')
+            pf = p.paragraph_format
+            pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
+
+    return doc
+
+
+# multiple choice
+def write_doc_mc(data, doc: Document, config):
+    # add document title
+    write_doc_title(doc, config)
+
+    logging.info('writing questions to document, {} in total'.format(len(data)))
+
+    for entry in data:
+
+        # question
+        for item in entry['question']:
+            doc.add_paragraph(item, style='Heading 2')
+
+        # choices:
+        max_ans_len = max(map(len, entry['choices']))
+        if max_ans_len <= 10:
+            separater = ['\t', '\t']
+            tab_pos = [1 + x * 4.5 for x in range(4)]
+
+        elif max_ans_len <= 22:
+            separater = ['\t', '\n\t']
+            tab_pos = [1, 10]
+
+        else:
+            separater = ['\n\t', '\n\t']
+            tab_pos = [1]
+
+        choice_count = len(entry['choices'])
+        choice_string = ['\t']
+        for cnt, item in enumerate(entry['choices']):
+            if cnt != choice_count - 1:
+                choice_string += item + separater[cnt % 2]
+            else:
+                choice_string += item
+
+        p = doc.add_paragraph(''.join(choice_string))
+        pf = p.paragraph_format
+        for pos in tab_pos:
+            pf.tab_stops.add_tab_stop(Cm(pos))
+
+        # answer
+        if not config['hide_answer']:
+            answer_string = ''.join(entry['answer'])
+            p = doc.add_paragraph("\t答案：" + answer_string, style='答案')
+            pf = p.paragraph_format
+            pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
+
+    return doc
+
+
+# true false questions
+def write_doc_tf(data, doc: Document, config):
+    # add document title
+    write_doc_title(doc, config)
+
+    logging.info('writing questions to document, {} in total'.format(len(data)))
+
+    for entry in data:
+
+        # question
+        for item in entry['question']:
+            doc.add_paragraph(item, style='Heading 2')
+
+        # answer
+        if not config['hide_answer']:
+            answer_string = ''.join(entry['answer'])
+            p = doc.add_paragraph("\t答案：" + answer_string, style='答案')
+            pf = p.paragraph_format
+            pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
+
+    return doc
 
 
 def main():
-    parser = ArgumentParser(description='a python script to convert structured excel file to word')
-    parser.add_argument('-i', '--input', metavar='filename', action='store',
+    cwd = getcwd()
+    source_path = path.join(cwd, 'data', r'线路架空线专业单选.xls')
+    # source_path = r"C:\Users\asterodeia\Desktop\变压器新增题库汇总.xlsx"
+    config_path = path.join(cwd, 'config.json')
+    document_template_path = path.join(cwd, 'data', 'template.docx')
+
+    configs = load_configs_from_file(config_path)
+    c = configs[0]
+    print(c.name)
+
+    name = 'Sheet1'
+
+    doc = Document(document_template_path)
+    qr = QuestionRecompositor(c, write_doc_sc)
+    qr.recompose(source_path, name, doc)
+    doc.save(path.join(cwd, name))
+
+
+def main2():
+    parser = ArgumentParser(description='a python script to convert structured excel to word')
+    parser.add_argument('-s', '--single-choice', metavar='filename', action='store',
                         help='source structured excel file')
-    parser.add_argument('-o', '--output', metavar='filename', action='store',
+    parser.add_argument('-m', '--multi-choice', metavar='filename', action='store',
                         help='target word file name (default: output.docx)')
-    parser.add_argument('-T', '--no-title', action='store_true',
+    parser.add_argument('-t', '--true-false', action='store_true',
                         help="to specify the excel file don't have a title row")
     args = parser.parse_args()
-
     pass
 
 
-def dummy_main():
-    c = Config
-    c.workbook = r"E:\PythonProjects\QuestionRecompositor\data\线路架空线专业判断.xls"
-    c.sheetname = 'Sheet1'
-    c.no_title = False
-    # c.needed_columns = {'question':['E'], 'choices':['F', 'G', 'H', 'I'],
-    # 'answers':['K']}
-    c.needed_columns = {'question': ['D'], 'answers': ['E']}
-    # c.word_template = r"E:\PythonProjects\QuestionRecompositor\data\template.docx"
-    c.word_template = r"E:\PythonProjects\QuestionRecompositor\data\template.docx"
-    c.conventional_letter = False
-    c.change_answer_letter = False
-    qr = QuestionRecompositor(c)
-    # qr.read()
-    qr.recompose2()
-
-
-def dummy_main2():
-    cwd = getcwd()
-    print(cwd)
-    rwp = ObjectiveQuestions('a')
-    workbook = r"线路架空线专业判断.xls"
-    sheetname = 'Sheet1'
-    rwp.read_data(path.join(cwd, 'data', workbook), sheetname)
 
 
 if __name__ == '__main__':
-    dummy_main2()
+    # cwd = getcwd()
+    # document_template_path = path.join(cwd, 'data', 'template.docx')
+    # doc = Document(document_template_path)
+    # get_document_params(doc)
+    main()
