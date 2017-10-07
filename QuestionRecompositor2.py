@@ -12,6 +12,7 @@ usage:
 import json
 import logging
 import re
+from argparse import ArgumentParser
 from os import getcwd
 from os import path
 
@@ -25,7 +26,30 @@ logging.basicConfig(level=logging.INFO,
                     datefmt='%Y-%m-%d %H:%M:%S')
 
 
-def get_raw_data(book, sheet, config) -> pd.DataFrame:
+class QuestionRecompositor(object):
+    def __init__(self, config, writer):
+        self.config = config
+        self.writer = writer
+        # this may change later
+        self.data_processor = process_data
+
+    def set_config(self, config):
+        self.config = config
+
+    def set_writer(self, writer):
+        self.writer = writer
+
+    def _load_data(self, file_name, sheet_name):
+        data_frame = load_data(file_name, sheet_name, self.config.read)
+        return data_frame
+
+    def recompose(self, file_name, sheet_name, doc):
+        data_frame = self._load_data(file_name, sheet_name)
+        data_frame = self.data_processor(data_frame, self.config.process)
+        self.writer(data_frame, doc, self.config.write)
+
+
+def load_data(book, sheet, config) -> pd.DataFrame:
     logging.info('reading data from excel file')
 
     no_header = config['no_header']
@@ -38,8 +62,7 @@ def get_raw_data(book, sheet, config) -> pd.DataFrame:
         exit(-1)
 
     except Exception as e:
-        logging.error('unknown error')
-        print(e)
+        logging.error('unexpected error: {}'.format(e))
         exit(-1)
 
     else:
@@ -64,7 +87,7 @@ def number_2_char(n, base=0):
 def process_data(data, config):
     logging.info('starting to process data')
 
-    if hasattr(config, 'choice_col'):
+    if 'choice_col' in config:
         needed_data_column = config['question_col'] + config['answer_col'] + config['choice_col']
     else:
         needed_data_column = config['question_col'] + config['answer_col']
@@ -77,7 +100,7 @@ def process_data(data, config):
         needed_data = needed_data.applymap(lambda s: re.sub(pattern, '', s))
 
     # TODO: if not choice questions, skip this
-    if hasattr(config, 'add_conventional_letter') and config['add_conventional_letter']:
+    if 'add_conventional_letter' in config and config['add_conventional_letter']:
 
         logging.info('\tadding conventional letter to choices')
         for i in range(len(config['choice_col'])):
@@ -92,7 +115,7 @@ def process_data(data, config):
 
             needed_data[config['choice_col'][i]] = ser
 
-    if hasattr(config, 'change_answer_letter') and config['change_answer_letter']:
+    if 'change_answer_letter' in config and config['change_answer_letter']:
         # TODO: first column of answer, change this?
         logging.info('\tchanging answer number to letters')
         answer_col = needed_data[config['answer_col'][0]]
@@ -114,7 +137,7 @@ def process_data(data, config):
             entry['question'].append(q)
 
         # choices
-        if hasattr(config, 'choice_col'):
+        if 'choice_col' in config:
             for c in row[config['choice_col']]:
                 # TODO: 'nan' values should be handle more carefully
                 if c != 'nan':
@@ -268,34 +291,46 @@ def write_doc_tf(data, doc: Document, config):
 
     return doc
 
+
 def main():
     cwd = getcwd()
-    # source_path = path.join(cwd, 'data', r'线路架空线专业单选.xls')
-    source_path = r"C:\Users\asterodeia\Desktop\变压器新增题库汇总.xlsx"
+    source_path = path.join(cwd, 'data', r'线路架空线专业单选.xls')
+    # source_path = r"C:\Users\asterodeia\Desktop\变压器新增题库汇总.xlsx"
     config_path = path.join(cwd, 'config.json')
     document_template_path = path.join(cwd, 'data', 'template.docx')
 
     configs = load_configs_from_file(config_path)
-    c = configs[2]
+    c = configs[0]
     print(c.name)
 
-    name = '判断'
-    data = get_raw_data(source_path, name, c.read)
-    parsed_data = process_data(data, c.process)
+    name = 'Sheet1'
 
     doc = Document(document_template_path)
-    write_doc_tf(parsed_data, doc, c.write)
+    qr = QuestionRecompositor(c, write_doc_sc)
+    qr.recompose(source_path, name, doc)
     doc.save(path.join(cwd, name))
+
+
+def main2():
+    parser = ArgumentParser(description='a python script to convert structured excel to word')
+    parser.add_argument('-s', '--single-choice', metavar='filename', action='store',
+                        help='source structured excel file')
+    parser.add_argument('-m', '--multi-choice', metavar='filename', action='store',
+                        help='target word file name (default: output.docx)')
+    parser.add_argument('-t', '--true-false', action='store_true',
+                        help="to specify the excel file don't have a title row")
+    args = parser.parse_args()
+    pass
 
 
 class Config(object):
     def __init__(self, data):
         # configs should include 4 parts: name, read method, process method and write method
         # so here don't have to check before assign
-        # self.name = None
-        # self.read = None
-        # self.process = None
-        # self.write = None
+        self.name = None
+        self.read = None
+        self.process = None
+        self.write = None
 
         self.load(data)
 
@@ -312,7 +347,12 @@ class Config(object):
                     self.process[col] = list(self.process[col])
 
 
-def load_configs_from_file(filename):
+def load_configs_from_file(filename: str) -> list:
+    """
+     helper function to load configs from file
+    :param filename: file contains the config(s)
+    :return: list of Config
+    """
     configs = []
 
     with open(filename, mode='r', encoding='utf-8') as f:
