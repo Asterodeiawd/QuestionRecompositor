@@ -3,52 +3,63 @@
     "name": "SingleChoice",
     "read":
     {
-      "no_header": false
+      "no_header": false,
+      "use_column_name": true
     },
-    "process":
+    "process": 
     {
-      "use_column_name": true,
-      "question_col": ["题目内容"],
-      "choice_col": ["选项1", "选项2", "选项3", "选项4", "选项5"],
-      "answer_col": ["参考答案"],
       "add_conventional_letter": true,
+      "answer_col": [
+        "参考答案"
+      ],
       "change_answer_letter": true,
+      "choice_col": [
+        "选项1",
+        "选项2",
+        "选项3",
+        "选项4",
+        "选项5"
+      ],
+      "question_col": [
+        "题目内容"
+      ],
       "trim": true
     },
-    "write":
+    "write": 
     {
-      "title": "单选题",
-      "hide_answer": false
+      "hide_answer": false,
+      "title": "单选题"
     }
   },
   {
-    "name": "MultiChoiceBK",
+    "name": "MultiChoice",
     "read":
     {
-        "no_header": false
+      "no_header": false,
+      "use_column_name": false
     },
     "process":
     {
-      "use_column_name": false,
       "question_col": "E",
-      "answer_col": "FGHIJ",
-      "choice_col": "K",
+      "choice_col": "FGHIJ",
+      "answer_col": "K",
       "add_conventional_letter": true,
       "change_answer_letter": true,
       "trim": true
     },
     "write":
     {
-      "title": "单选题"
+      "title": "多选题",
+      "hide_answer": false
     }
   },
   {
     "name": "TrueFalse",
     "read": {
-      "no_header": false
+      "no_header": false,
+      "use_column_name": true
     },
     "process": {
-      "use_column_name": true,
       "question_col": [
         "题目内容"
       ],
@@ -59,6 +70,26 @@
     },
     "write": {
       "title": "判断题",
+      "hide_answer": false
+    }
+  },
+  {
+    "name": "Subjective",
+    "read": {
+      "no_header": false,
+      "use_column_name": true
+    },
+    "process": {
+      "question_col": [
+        "题目内容"
+      ],
+      "answer_col": [
+        "参考答案"
+      ],
+      "trim": false
+    },
+    "write": {
+      "title": "案例题",
       "hide_answer": false
     }
   }

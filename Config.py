@@ -24,8 +24,8 @@ class Config(object):
         self.process = data['process']
         self.write = data['write']
 
-    def unify_process(self):
-        if not self.process['use_column_name']:
+    def unify(self):
+        if not self.read['use_column_name']:
             for col in ['question_col', 'answer_col', 'choice_col']:
                 if isinstance(self.process[col], str):
                     self.process[col] = list(self.process[col])
@@ -51,6 +51,6 @@ def load_configs_from_file(filename: str) -> list:
 
     logging.info('unifying process part in config')
     for config in configs:
-        config.unify_process()
+        config.unify()
 
     return configs
