@@ -21,7 +21,7 @@ def main():
     source_path = [r'线路架空线专业单选.xls', r'线路架空线专业多选.xls', r'线路架空线专业判断.xls',
                    r'线路架空线专业案例.xls', r'线路架空线专业问答.xls']
     config_path = path.join(cwd, 'config.json')
-    document_template_path = path.join(cwd, 'data', 'template.docx')
+    document_template_path = path.join(cwd, 'data', 'templated.docx')
 
     configs = load_configs_from_file(config_path)
 

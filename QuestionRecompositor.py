@@ -11,7 +11,8 @@ import pandas as pd
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.enum.text import WD_TAB_ALIGNMENT
-from docx.shared import Cm
+from docx.enum.style import WD_STYLE_TYPE
+from docx.shared import Cm, Pt
 
 from utils import *
 
@@ -127,7 +128,9 @@ class DocumentWriter(object):
             logging.error(e)
         else:
             if not self._template:
-                self._document.styles.add_style('答案', WD_PARAGRAPH_ALIGNMENT.LEFT)
+                self.document.styles.add_style('答案', WD_STYLE_TYPE.PARAGRAPH)
+                font = self.document.styles['Normal'].font
+                font.size = Pt(12)
 
     @property
     def document(self):
