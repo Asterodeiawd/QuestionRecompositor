@@ -9,18 +9,11 @@ import re
 
 import pandas as pd
 from docx import Document
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.enum.text import WD_TAB_ALIGNMENT
 from docx.shared import Cm
 
-
-def concatenate(array: list, sep: str = '') -> str:
-    ret = []
-    for item in array:
-        ret.append(item)
-        ret.append(sep)
-
-    ret.pop()
-    return ''.join(ret)
+from utils import *
 
 
 def load_data(book, sheet, config) -> pd.DataFrame:
@@ -49,25 +42,6 @@ def load_data(book, sheet, config) -> pd.DataFrame:
         return dataframe
 
 
-def shift_character(ch, i):
-    """shift character according to ascii code"""
-
-    if not str.isalpha(ch):
-        raise ValueError('only support characters from A-Z and a-z')
-
-    result = chr(ord(ch) + i)
-    if not str.isalpha(result):
-        raise ValueError('not a character after shifting')
-
-    return result
-
-
-# TODO: EXCEL-LIKE NUMBER TO CHARACTER
-def number_2_char(n, base=0):
-    assert n >= base
-    return chr(ord('A') + n - base)
-
-
 def process_data(data, config):
     logging.info('starting to process data')
 
@@ -80,11 +54,10 @@ def process_data(data, config):
 
     if config['trim']:
         logging.info('\ttrimming data')
-        pattern = re.compile(r'[\r\n]')
+        pattern = re.compile(r'\n(?=\S)')
         needed_data = needed_data.applymap(lambda s: re.sub(pattern, '', s))
 
-    # TODO: if not choice questions, skip this
-    if 'add_conventional_letter' in config and config['add_conventional_letter']:
+    if config.get('add_conventional_letter'):
 
         logging.info('\tadding conventional letter to choices')
         for i in range(len(config['choice_col'])):
@@ -99,14 +72,10 @@ def process_data(data, config):
 
             needed_data[config['choice_col'][i]] = ser
 
-    if 'change_answer_letter' in config and config['change_answer_letter']:
-        # TODO: first column of answer, change this?
+    if config.get('change_answer_letter'):
+        # this is for objective questions, so only one column of answer exist
         logging.info('\tchanging answer number to letters')
         answer_col = needed_data[config['answer_col'][0]]
-
-        # def change_answer_letter(s):
-        # answer = [number_2_char(int(ch), 1) for ch in s]
-        # return ''.join(answer)
 
         ser = answer_col.apply(lambda s: ''.join([number_2_char(int(ch), 1) for ch in s]))
         needed_data[config['answer_col'][0]] = ser
@@ -138,38 +107,59 @@ def process_data(data, config):
     return ret
 
 
-# builder
+# documnet builder
 class DocumentWriter(object):
     def __init__(self, template):
         self._document = None
         self._template = template
 
     def create_document(self):
-        # TODO: check if template exist
+
+        if self._template and not check_file_exist(self._template):
+            logging.warning('specified document template does not exist, use default template instead')
+            self._template = None
+
         try:
             self._document = Document(self._template)
 
         # TODO: NOT CORRECT RIGHT NOW, CHANGE LATER
         except ValueError as e:
             logging.error(e)
-
-    def get_document(self):
-        return self.document
+        else:
+            if not self._template:
+                self._document.styles.add_style('答案', WD_PARAGRAPH_ALIGNMENT.LEFT)
 
     @property
     def document(self):
         return self._document
 
-    # TODO: this is a fake one for reference only
-    def get_document_params(self):
+    def get_document_params(self, unit='twips') -> dict:
+        """ return a dict contains object of length of the last section parameters """
+
+        assert (unit in ('cm', 'mm', 'twips', 'emu', 'inches', 'pt'))
+
+        # here we use a small trick to avoid defining functions like:
+        # if unit == 'cm':
+        #   def func(x):
+        #     return x.cm
+        # elif: unit == 'mm':
+        # ...
+        func = eval('lambda x: x.{}'.format(unit))
+
         section = self.document.sections[-1]
-        left_margin = section.left_margin.cm
-        right_margin = section.right_margin.cm
-        top_margin = section.top_margin.cm
-        bottom_margin = section.bottom_margin.cm
-        height = section.page_height.cm
-        width = section.page_width.cm
-        return height, width, left_margin, right_margin, top_margin, bottom_margin
+        left_margin = func(section.left_margin)
+        right_margin = func(section.right_margin)
+        top_margin = func(section.top_margin)
+        bottom_margin = func(section.bottom_margin)
+        page_height = func(section.page_height)
+        page_width = func(section.page_width)
+        # 装订线
+        gutter = section.gutter
+
+        ret = {'margin': dict(top=top_margin, bottom=bottom_margin, left=left_margin, right=right_margin),
+               'page_size': dict(height=page_height, width=page_width), 'gutter': gutter}
+
+        return ret
 
     def write_title(self, title, level):
         assert 0 <= level <= 9
@@ -182,7 +172,6 @@ class DocumentWriter(object):
     def write_choices(self, choices, style):
         # this method is not interested by every derived class,
         # so doesn't need a default implementation
-        raise NotImplementedError('please specify a derived class')
         pass
 
     def write_answer(self, answer, style):
@@ -190,27 +179,36 @@ class DocumentWriter(object):
             self.document.add_paragraph(item, style=style)
 
 
-class SingleChoiceWriter(DocumentWriter):
+class ObjectiveQuestionWriter(DocumentWriter):
     def __init__(self, template=None):
         super().__init__(template)
 
-    def _get_choice_tabstops_pos(self, choices: list):
+    def _get_choice_tabstops_pos(self, choices: list, style):
 
-        params = self.get_document_params()
+        page_params = self.get_document_params('cm')
+        style = self.document.styles[style]
+        font_size = style.font.size.cm
+        start_pos = 2 * font_size
+
+        page_width = page_params['page_size']['width']
+        available_width = page_width - page_params['margin']['left'] - page_params['margin']['right']
+        single_choice_width = (available_width - start_pos - 1) / 4
+        single_choice_length_4 = single_choice_width // font_size
+        single_choice_length_2 = single_choice_width // font_size * 2
+
         max_ans_len = max(map(len, choices))
 
-        # TODO: should be changed here, using document params maybe
-        if max_ans_len <= 10:
-            tab_pos = [1 + x * 4.5 for x in range(4)]
-        elif max_ans_len <= 22:
-            tab_pos = [1, 10]
+        if max_ans_len <= single_choice_length_4:
+            tab_pos = [start_pos + x * single_choice_width for x in range(4)]
+        elif max_ans_len <= single_choice_length_2:
+            tab_pos = [start_pos + x * single_choice_width * 2 for x in range(2)]
         else:
-            tab_pos = [1]
+            tab_pos = [start_pos]
 
         return tab_pos
 
     @staticmethod
-    def _get_formatted_choice(choices: list, choice_count_per_line):
+    def _get_formatted_choice(choices: list, choice_count_per_line: int):
         formatted_choices = ['\t']
         current_item_count = choice_count_per_line
 
@@ -231,13 +229,9 @@ class SingleChoiceWriter(DocumentWriter):
 
         return ''.join(formatted_choices)
 
-    # the default version is ok
-    # def write_title(self, title, level):
-    # def write_question(self, question, style):
+    def write_choices(self, choices: list, style: str):
 
-    def write_choices(self, choices: list, style):
-
-        tab_pos = self._get_choice_tabstops_pos(choices)
+        tab_pos = self._get_choice_tabstops_pos(choices, style)
         formatted_choice = self._get_formatted_choice(choices, len(tab_pos))
 
         p = self.document.add_paragraph(''.join(formatted_choice))
@@ -247,90 +241,15 @@ class SingleChoiceWriter(DocumentWriter):
 
     def write_answer(self, answer, style):
 
+        # objective questions' answers are like 'A' or 'BCD',
+        # so just covert the list of answer to a string by concatenate them
         if isinstance(answer, list):
-            """
-            formatted_answer = []
-            for ans in answer:
-                answer_string = formatted_answer.append(ans)
-            formatted_answer = ''.join(formatted_answer)
-            """
             formatted_answer = concatenate(answer)
         else:
             formatted_answer = answer
 
         p = self.document.add_paragraph("\t答案：{}".format(formatted_answer), style=style)
-        pf = p.paragraph_format
-        pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
-
-
-# TODO: now this class is the same with SingleChoiceWriter, new class ObjectiveQuestionsWriter?
-class MultiChoiceWriter(DocumentWriter):
-    def __init__(self, template=None):
-        super().__init__(template)
-
-    def _get_choice_tabstops_pos(self, choices: list):
-
-        params = self.get_document_params()
-        max_ans_len = max(map(len, choices))
-
-        # TODO: should be changed here, using document params maybe
-        if max_ans_len <= 10:
-            tab_pos = [1 + x * 4.5 for x in range(4)]
-        elif max_ans_len <= 22:
-            tab_pos = [1, 10]
-        else:
-            tab_pos = [1]
-
-        return tab_pos
-
-    @staticmethod
-    def _get_formatted_choice(choices: list, choice_count_per_line):
-        formatted_choices = ['\t']
-        current_item_count = choice_count_per_line
-
-        for idx, choice in enumerate(choices, 1):
-            formatted_choices.append(choice)
-            current_item_count -= 1
-
-            # decide string separator
-            if idx != len(choices):
-                if current_item_count != 0:
-                    formatted_choices.append('\t')
-                else:
-                    formatted_choices.append('\n\t')
-                    current_item_count = choice_count_per_line
-            else:
-                pass
-                # don't need anything
-
-        return ''.join(formatted_choices)
-
-    def write_choices(self, choices: list, style):
-
-        tab_pos = self._get_choice_tabstops_pos(choices)
-        formatted_choice = self._get_formatted_choice(choices, len(tab_pos))
-
-        p = self.document.add_paragraph(''.join(formatted_choice))
-        pf = p.paragraph_format
-        for pos in tab_pos:
-            pf.tab_stops.add_tab_stop(Cm(pos))
-
-    def write_answer(self, answer, style):
-
-        if isinstance(answer, list):
-            """
-            formatted_answer = []
-            for ans in answer:
-                answer_string = formatted_answer.append(ans)
-            formatted_answer = ''.join(formatted_answer)
-            """
-            formatted_answer = concatenate(answer)
-        else:
-            formatted_answer = answer
-
-        p = self.document.add_paragraph("\t答案：{}".format(formatted_answer), style=style)
-        pf = p.paragraph_format
-        pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
+        p.paragraph_format.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
 
 
 class TrueFalseWriter(DocumentWriter):
@@ -341,8 +260,7 @@ class TrueFalseWriter(DocumentWriter):
         # this type of questions should have only one answer
         assert len(answer) == 1
         p = self.document.add_paragraph("\t答案：" + answer[0], style='答案')
-        pf = p.paragraph_format
-        pf.tab_stops.add_tab_stop(Cm(18), alignment=WD_TAB_ALIGNMENT.RIGHT)
+        p.paragraph_format.alignment = WD_TAB_ALIGNMENT.RIGHT
 
 
 class SubjectiveQuestionWriter(DocumentWriter):
@@ -352,12 +270,8 @@ class SubjectiveQuestionWriter(DocumentWriter):
     def write_answer(self, answer, style):
         self.document.add_paragraph("\t答案：")
 
-        # remove wrong '\n' characters in answer, the correct one is followed by spaces
-        # in *MY* source file, you may have to change this behaviour
-        pattern = re.compile(r'(\n)\S')
         for item in answer:
-            new_answer = re.sub(pattern, '', item)
-            self.document.add_paragraph(new_answer, style=style)
+            self.document.add_paragraph(item, style=style)
 
 
 class QuestionRecompositor(object):
@@ -375,10 +289,10 @@ class QuestionRecompositor(object):
         data_frame = load_data(file_name, sheet_name, self._config.read)
         return data_frame
 
+    # director
     def recompose(self, file_name, sheet_name, builder: DocumentWriter):
         data_frame = self._load_data(file_name, sheet_name)
         data_frame = self.data_processor(data_frame, self._config.process)
-        # self._writer(data_frame, doc, self._config.write)
 
         builder.create_document()
         builder.write_title(self._config.write['title'], level=0)

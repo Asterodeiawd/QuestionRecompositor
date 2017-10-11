@@ -11,7 +11,6 @@ class Config(object):
     def __init__(self, data):
         # configs should include 4 parts: name, read method, process method and write method
         # so here don't have to check before assign
-        self.name = None
         self.read = None
         self.process = None
         self.write = None
@@ -19,7 +18,6 @@ class Config(object):
         self.load(data)
 
     def load(self, data):
-        self.name = data['name']
         self.read = data['read']
         self.process = data['process']
         self.write = data['write']
@@ -31,26 +29,22 @@ class Config(object):
                     self.process[col] = list(self.process[col])
 
 
-def load_configs_from_file(filename: str) -> list:
+def load_configs_from_file(filename: str) -> dict:
     """
      helper function to load configs from file
     :param filename: file contains the config(s)
     :return: list of Config
     """
-    configs = []
+    configs = {}
 
     with open(filename, mode='r', encoding='utf-8') as f:
         raw_configs = json.loads(f.read())
 
-        # configs should be in one list, single config can omit the outter list
-        if isinstance(raw_configs, list):
-            for raw_config in raw_configs:
-                configs.append(Config(raw_config))
-        else:
-            configs.append(Config(raw_configs))
+        for key, value in raw_configs.items():
+            configs[key] = Config(value)
 
     logging.info('unifying process part in config')
-    for config in configs:
+    for config in configs.values():
         config.unify()
 
     return configs
